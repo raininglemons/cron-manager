@@ -2,6 +2,9 @@
 import config from './config';
 import Assignee from './Assignee';
 import Job from './Job';
+import consoleFactory from 'console-factory';
+
+const console = consoleFactory('CronDaemon.js', 0);
 
 type JobName = string;
 type AssigneeUuid = string;
@@ -285,7 +288,7 @@ class CronDaemon {
       }
       // Else report it to the necessary window
       //
-      else {
+      else if (assignee.callback) {
         assignee.callback(message);
       }
     }
@@ -322,7 +325,7 @@ class CronDaemon {
 
     // Else report it to the necessary window
     //
-    else {
+    else if (assignee.callback) {
       console.warn('Trying to emit message over postMessage', assignee);
       assignee.callback(message);
     }
@@ -364,7 +367,7 @@ class CronDaemon {
 
     // Else report it to the necessary window
     //
-    else {
+    else if (!this.localCallback) {
       this.assignees.filter(
           assignee => assignee.uuid !== uuid && assignee.registeredJobs.indexOf(job) > -1
         )
