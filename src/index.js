@@ -1,6 +1,16 @@
 // @flow
-import CronDaemon from './CronDaemon';
 
-const cronDaemon = new CronDaemon;
+import Client from './Client';
 
-export default cronDaemon;
+const client = new Client;
+
+if (window.location.search.indexOf('makeJob') > -1) {
+  client.register(
+    'test-job',
+    3000,
+    (done, ping) => setTimeout(() => done({value: 'awesome success'}), 2000),
+    (response) => console.warn('Got a result :D', response)
+  );
+}
+
+export default client;

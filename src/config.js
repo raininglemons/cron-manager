@@ -1,7 +1,8 @@
 // @flow
 
 const config = {
-  pingInterval: 5000,
+  pingInterval: 15000,
+  jobTimeout: 10000,
   localStorage: {
     eventKey: 'domsevent',
     metaStorageKey: 'domsstorage',
