@@ -9,13 +9,15 @@ class Assignee {
   registeredJobs: JobName[];
   assignedJobs: JobName[];
   isActive: boolean;
+  callback: ?Function;
 
-  constructor(uuid, now) {
+  constructor(uuid: AssigneeUuid, now: number, callback: ?Function) {
     this.uuid = uuid;
     this.lastPing = now;
     this.registeredJobs = [];
     this.assignedJobs = [];
     this.isActive = true;
+    this.callback = callback;
   }
 
   didPing(now: number) {

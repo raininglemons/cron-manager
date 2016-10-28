@@ -11,6 +11,7 @@ type Message = {
   uuid: AssigneeUuid,
   job: ?JobName,
   data: ?any,
+  callback: ?Function,
 };
 
 export const MessageTypes = {
@@ -24,7 +25,6 @@ export const MessageTypes = {
 };
 
 class CronDaemon {
-  origin: string;
   assignees: Assignee[];
   jobs: Job[];
   localUuid: ?AssigneeUuid;
@@ -32,7 +32,6 @@ class CronDaemon {
   lastMessage: ?string;
 
   constructor(uuid: ?AssigneeUuid, localCallback: ?Function) {
-    this.origin = window.location.origin;
     this.localUuid = uuid || null;
     this.localCallback = localCallback || null;
     this.assignees = [];
@@ -54,30 +53,33 @@ class CronDaemon {
   register() {
     // localStorage mode
     //
-    const cachedState = window.localStorage.getItem(config.localStorage.metaStorageKey);
-    if (cachedState) {
-      try {
-        const { assignees, jobs } = JSON.parse(cachedState);
-        this.assignees = assignees.map(metadata => {
-          const assignee = new Assignee();
-          return Object.assign(assignee, metadata);
-        });
+    if (this.localUuid && this.localCallback) {
+      const cachedState = window.localStorage.getItem(config.localStorage.metaStorageKey);
+      if (cachedState) {
+        try {
+          const { assignees, jobs } = JSON.parse(cachedState);
+          this.assignees = assignees.map(metadata => {
+            const assignee = new Assignee();
+            return Object.assign(assignee, metadata);
+          });
 
-        console.log('got any jobs?', jobs);
-
-        this.jobs = jobs.map(metadata => {
-          const job = new Job();
-          console.log('Trying to restore job', metadata, job);
-          return Object.assign(job, metadata);
-        });
-      } catch (e) {
-        console.warn('Cached state unreadable', e);
+          this.jobs = jobs.map(metadata => {
+            const job = new Job();
+            console.log('Trying to restore job', metadata, job);
+            return Object.assign(job, metadata);
+          });
+        } catch (e) {
+          console.warn('Cached state unreadable', e);
+        }
       }
+
+      console.warn('Restored state', cachedState);
+
+      window.addEventListener('storage', e => this.onReceiveMessage(e));
+    } else {
+      // Running as a service worker...
+
     }
-
-    console.warn('Restored state', cachedState);
-
-    window.addEventListener('storage', e => this.onReceiveMessage(e));
   }
 
   /**
@@ -92,6 +94,15 @@ class CronDaemon {
 
     this.assignees.filter(assignee => assignee.lastPing < expiredTime)
       .forEach(({ uuid }) => this.unregisterAssignee(uuid));
+
+    // Remove jobs that have expired data and no assignees
+    //
+    this.jobs.filter(({
+        interval,
+        lastSucceeded,
+        assignees,
+      }) => assignees.length === 0 && lastSucceeded < now - interval)
+      .forEach(job => this.unregisterJob(job));
 
     // Redistribute any jobs that have timed out
     //
@@ -133,6 +144,7 @@ class CronDaemon {
    * @returns {CronDaemon}
    */
   emit(message: Message): CronDaemon {
+    console.warn('Emiting message', message);
     const json = JSON.stringify(message);
     this.lastMessage = json;
     window.localStorage.setItem(config.localStorage.eventKey, json);
@@ -164,7 +176,6 @@ class CronDaemon {
    * @returns {*}
    */
   onReceiveMessage(event): CronDaemon {
-    //console.debug('onReceiveMessage', event, this);
     if (event.key !== config.localStorage.eventKey) {
       return;
     }
@@ -193,7 +204,7 @@ class CronDaemon {
         return this.onReceivePing(message);
 
       case MessageTypes.REGISTERJOB:
-        return this.onReceiveJobRegistration(message);
+        return this.onReceiveRegisterJob(message);
 
       case MessageTypes.ASSIGNEDJOB:
         return this.onReceiveJobAssigned(message);
@@ -224,7 +235,7 @@ class CronDaemon {
     const assignee = this.getAssignee(message.uuid);
 
     if (assignee === null) {
-      return this.registerAssignee(message.uuid, this.now());
+      return this.registerAssignee(message.uuid, message.callback);
     }
 
     assignee.didPing(this.now());
@@ -246,7 +257,7 @@ class CronDaemon {
    * always be the current configuration.
    * @param message
    */
-  onReceiveJobRegistration(message: Message) {
+  onReceiveRegisterJob(message: Message) {
     // Check we have the metadata for the job first
     const { uuid, data } = message;
 
@@ -256,8 +267,27 @@ class CronDaemon {
 
     const assignee = this.getAssignee(uuid);
 
-    if (assignee.registeredJobs.indexOf(job.name) === -1) {
-      assignee.registeredJobs.push(job.name);
+    assignee.addRegisteredJob(job.name);
+
+    /**
+     * If we already have a response for this job, send it to properly init
+     * the assignee
+     */
+    if (job.lastSucceeded > 0) {
+      const message = {
+        type: MessageTypes.JOBCOMPLETED,
+        job: job.name,
+        data: job.lastResponse,
+      };
+
+      if (this.localUuid !== uuid && this.localCallback) {
+        this.localCallback(message);
+      }
+      // Else report it to the necessary window
+      //
+      else {
+        assignee.callback(message);
+      }
     }
   }
 
@@ -273,12 +303,6 @@ class CronDaemon {
 
     targetedJob.removeAssignee(uuid);
     assignee.removeAssignedJob(job).removeRegisteredJob(job);
-
-    // If no assignees left then delete the job
-    //
-    if (targetedJob.assignees.length === 0) {
-      this.unregisterJob(targetedJob);
-    }
   }
 
   /**
@@ -289,7 +313,7 @@ class CronDaemon {
     const { uuid, job } = message;
 
     this.getJob(job).setAssignedTo(uuid, this.now());
-    this.getAssignee(uuid).addAssignedJob(job);
+    const assignee = this.getAssignee(uuid).addAssignedJob(job);
 
     // If local
     if (uuid === this.localUuid && this.localCallback) {
@@ -298,6 +322,10 @@ class CronDaemon {
 
     // Else report it to the necessary window
     //
+    else {
+      console.warn('Trying to emit message over postMessage', assignee);
+      assignee.callback(message);
+    }
   }
 
   /**
@@ -336,6 +364,12 @@ class CronDaemon {
 
     // Else report it to the necessary window
     //
+    else {
+      this.assignees.filter(
+          assignee => assignee.uuid !== uuid && assignee.registeredJobs.indexOf(job) > -1
+        )
+        .forEach(assignee => assignee.callback(message));
+    }
   }
 
   /**
@@ -406,9 +440,10 @@ class CronDaemon {
   /**
    * Registers a new assignee into the pool
    * @param uuid
+   * @param callback
    */
-  registerAssignee(uuid: AssigneeUuid) {
-    const assignee = new Assignee(uuid, this.now());
+  registerAssignee(uuid: AssigneeUuid, callback: ?Function) {
+    const assignee = new Assignee(uuid, this.now(), callback);
     console.debug('Adding assignee to the pool', assignee);
 
     this.assignees.push(assignee);
@@ -435,13 +470,6 @@ class CronDaemon {
 
       if (position !== -1) {
         job.assignees.splice(position, 1);
-
-        if (job.assignees.length === 0) {
-          // No one registered for this job anymore, remove
-          // it.
-
-          this.unregisterJob(job);
-        }
       }
     });
 
@@ -474,7 +502,7 @@ class CronDaemon {
     const savedJob = this.getJob(name);
 
     if (savedJob !== null) {
-      console.debug('Ammending job', job);
+      console.debug('Amending job', job);
       savedJob.setInterval(interval);
 
       return savedJob;

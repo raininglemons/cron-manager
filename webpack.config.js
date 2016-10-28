@@ -4,7 +4,7 @@ const path = require('path');
 console.warn(`Building in ${process.env.NODE_ENV || 'development'} mode`);
 
 module.exports = {
-  entry: './src/index.js',
+  entry: './src/test.js',
 
   output: {
     path: 'public',

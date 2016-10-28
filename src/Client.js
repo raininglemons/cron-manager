@@ -1,7 +1,10 @@
 // @flow
 import uuid from 'uuid';
+import consoleFactory from 'console-factory';
 import CronDaemon, { MessageTypes } from './CronDaemon';
 import config from './config';
+
+const console = consoleFactory('Client.js', 0);
 
 type JobName = string;
 type AssigneeUuid = string;
@@ -22,26 +25,55 @@ type Runner = (done: Function, ping: Function) => {};
 
 type Callback = (data: ?any) => {};
 
+const webWorkerSupported = typeof SharedWorker !== 'undefined';
+
 class Client {
   uuid: AssigneeUuid;
   jobs: Object<JobName, JobRunner>;
+  daemon: ?CronDaemon;
+  webWorkerPort: ?Object;
 
   constructor() {
     this.uuid = uuid.v4();
-    this.daemon = new CronDaemon(this.uuid, this.receiveMessage.bind(this));
     this.jobs = {};
 
+    if (webWorkerSupported) {
+      const sharedWorker = require('shared-worker!./worker.js')();
+      this.webWorkerPort = sharedWorker.port;
+      console.warn('Success in loading worker', sharedWorker);
+
+      this.webWorkerPort.addEventListener('message', this.receiveWorkerMessage.bind(this), false);
+      this.webWorkerPort.start();
+    } else {
+      this.daemon = new CronDaemon(this.uuid, this.receiveMessage.bind(this));
+    }
+
     this.emit(MessageTypes.PING);
+
     setInterval(() => this.emit(MessageTypes.PING), config.pingInterval * 0.5);
+
+    window.addEventListener('unload', () => this.emit(MessageTypes.UNREGISTERASSIGNEE));
   }
 
   emit(type: string, job: ?JobName, data: ?any) {
-    this.daemon.send({
+    const message = {
       type,
       job,
       data,
       uuid: this.uuid,
-    });
+    };
+    console.warn('Emitting message locally', message);
+
+    if (webWorkerSupported) {
+      this.webWorkerPort.postMessage(message);
+    } else {
+      this.daemon.send(message);
+    }
+  }
+
+  receiveWorkerMessage(event) {
+    console.log('Received message from daemon', event);
+    this.receiveMessage(event.data);
   }
 
   receiveMessage(message: Message) {
@@ -63,7 +95,6 @@ class Client {
     console.debug('Running job', job);
 
     const done = (data: ?any) => {
-      console.log('Done got: ', data);
       this.emit(MessageTypes.JOBCOMPLETED, job, data);
       this.completedJob(job, data);
     };
