@@ -4,6 +4,7 @@ import config from './config';
 import Assignee from './Assignee';
 import Job from './Job';
 import { getStore } from './indexedDb';
+import toSimpleObject from './toSimpleObject';
 
 const console = consoleFactory('CronDaemon.js', 3);
 
@@ -82,7 +83,8 @@ class CronDaemon {
           this.pendingMessages.forEach(message => this.onReceive(message));
 
           this.houseKeeping();
-          setInterval(() => this.houseKeeping(), 1000);
+          setInterval(() => this.houseKeeping(), 100);
+          // setInterval(() => this.persistState(), 1000);
         };
       });
     }
@@ -163,12 +165,10 @@ class CronDaemon {
    * new tabs can jump right into the same state we're currently in.
    */
   persistState() {
-    const state = {
-      assignees: this.assignees,
-      jobs: this.jobs,
-    };
-
     if (this.isWorker) {
+      const state = {
+        jobs: this.jobs,
+      };
       getStore(store => {
         console.debug('Saving state', state);
         store.put({
@@ -177,6 +177,10 @@ class CronDaemon {
         });
       });
     } else {
+      const state = {
+        assignees: this.assignees,
+        jobs: this.jobs,
+      };
       const cachedState = window.localStorage.getItem(config.localStorage.metaStorageKey);
       const localState = JSON.stringify(state);
 
@@ -253,28 +257,51 @@ class CronDaemon {
     console.debug('Received message', message);
     switch (message.type) {
       case MessageTypes.PING:
-        return this.onReceivePing(message);
+        this.onReceivePing(message);
+        break;
 
       case MessageTypes.REGISTERJOB:
-        return this.onReceiveRegisterJob(message);
+        this.onReceiveRegisterJob(message);
+        break;
 
       case MessageTypes.ASSIGNEDJOB:
-        return this.onReceiveJobAssigned(message);
+        this.onReceiveJobAssigned(message);
+        break;
 
       case MessageTypes.PINGJOB:
-        return this.onReceivePingJob(message);
+        this.onReceivePingJob(message);
+        break;
 
       case MessageTypes.UNREGISTERASSIGNEE:
-        return this.onReceiveUnregisterAssignee(message);
+        this.onReceiveUnregisterAssignee(message);
+        break;
 
       case MessageTypes.JOBCOMPLETED:
-        return this.onReceiveJobCompleted(message);
+        this.onReceiveJobCompleted(message);
+        break;
 
       case MessageTypes.UNREGISTERJOB:
-        return this.onReceiveUnregisterJob(message);
+        this.onReceiveUnregisterJob(message);
+        break;
 
       default:
         console.warn('Unrecognised message type');
+    }
+
+    /**
+     * For a shared worker, instead of a timed save of state, as we only every really
+     * want to persist, last success and last result, we'll save state on demand.
+     */
+    if (this.isWorker) {
+      switch (message.type) {
+        case MessageTypes.UNREGISTERASSIGNEE:
+        case MessageTypes.JOBCOMPLETED:
+          this.persistState();
+          break;
+
+        default:
+          // Don't persist state
+      }
     }
   }
 
