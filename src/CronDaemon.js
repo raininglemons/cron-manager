@@ -1,10 +1,11 @@
 // @flow
+import consoleFactory from 'console-factory';
 import config from './config';
 import Assignee from './Assignee';
 import Job from './Job';
-import consoleFactory from 'console-factory';
+import { getStore } from './indexedDb';
 
-const console = consoleFactory('CronDaemon.js', 0);
+const console = consoleFactory('CronDaemon.js', 3);
 
 type JobName = string;
 type AssigneeUuid = string;
@@ -33,30 +34,61 @@ class CronDaemon {
   localUuid: ?AssigneeUuid;
   localCallback: ?Function;
   lastMessage: ?string;
+  ready: boolean;
+  pendingMessages: Message[];
+  isWorker: boolean;
 
   constructor(uuid: ?AssigneeUuid, localCallback: ?Function) {
     this.localUuid = uuid || null;
     this.localCallback = localCallback || null;
     this.assignees = [];
     this.jobs = [];
+    this.ready = false;
+    this.pendingMessages = [];
+    this.isWorker = !uuid && !localCallback;
 
     this.register();
 
     console.log('Jobs?', this.jobs);
-
-    setInterval(() => this.houseKeeping(), 1000);
-    if (localCallback) {
-      setInterval(() => this.persistState(), 1000);
-    }
   }
 
   /**
    * Registers listeners and pulls cache of localStorage when in local mode.
    */
   register() {
+    // shared worker mode
+    //
+    // Running as a service worker so we'll use indexeddb to save and restore
+    // our state
+    if (this.isWorker) {
+      getStore(store => {
+        const cache = store.get('cache');
+
+        cache.onsuccess = cache.onerror = () => {
+          if (cache.result) {
+            const { jobs } = cache.result.state;
+
+            this.jobs = jobs.map(metadata => {
+              const job = new Job();
+              console.log('Trying to restore job', metadata, job);
+              return Object.assign(job, metadata);
+            });
+          }
+
+          this.ready = true;
+
+          // Now execute all cached messages
+          //
+          this.pendingMessages.forEach(message => this.onReceive(message));
+
+          this.houseKeeping();
+          setInterval(() => this.houseKeeping(), 1000);
+        };
+      });
+    }
     // localStorage mode
     //
-    if (this.localUuid && this.localCallback) {
+    else {
       const cachedState = window.localStorage.getItem(config.localStorage.metaStorageKey);
       if (cachedState) {
         try {
@@ -77,11 +109,12 @@ class CronDaemon {
       }
 
       console.warn('Restored state', cachedState);
+      this.ready = true;
+      this.houseKeeping();
 
       window.addEventListener('storage', e => this.onReceiveMessage(e));
-    } else {
-      // Running as a service worker...
-
+      setInterval(() => this.houseKeeping(), 1000);
+      setInterval(() => this.persistState(), 1000);
     }
   }
 
@@ -130,14 +163,26 @@ class CronDaemon {
    * new tabs can jump right into the same state we're currently in.
    */
   persistState() {
-    const cachedState = window.localStorage.getItem(config.localStorage.metaStorageKey);
-    const localState = JSON.stringify({
+    const state = {
       assignees: this.assignees,
       jobs: this.jobs,
-    });
+    };
 
-    if (cachedState !== localState) {
-      window.localStorage.setItem(config.localStorage.metaStorageKey, localState);
+    if (this.isWorker) {
+      getStore(store => {
+        console.debug('Saving state', state);
+        store.put({
+          state,
+          key: 'cache',
+        });
+      });
+    } else {
+      const cachedState = window.localStorage.getItem(config.localStorage.metaStorageKey);
+      const localState = JSON.stringify(state);
+
+      if (cachedState !== localState) {
+        window.localStorage.setItem(config.localStorage.metaStorageKey, localState);
+      }
     }
   }
 
@@ -162,9 +207,13 @@ class CronDaemon {
    * @returns {CronDaemon}
    */
   send(message: Message): CronDaemon {
-    this.onReceive(message);
+    if (!this.ready) {
+      this.pendingMessages.push(message);
+    } else {
+      this.onReceive(message);
+    }
 
-    if (this.localUuid && this.localCallback) {
+    if (!this.isWorker) {
       // Message was from a local source, replicate it on to
       // any other instances.
       this.emit(message);
@@ -252,6 +301,13 @@ class CronDaemon {
     const { uuid } = message;
 
     this.unregisterAssignee(uuid);
+
+    if (this.isWorker && this.assignees.length === 0) {
+      // Shared worker is about to close as there are no more windows
+      // referencing the service. Save state
+      console.warn('Shared worker is about to die. Save state now');
+      this.persistState();
+    }
   }
 
   /**

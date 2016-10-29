@@ -7,6 +7,10 @@ const config = {
     eventKey: 'domsevent',
     metaStorageKey: 'domsstorage',
   },
+  indexedDb: {
+    db: 'domsevent',
+    objectType: 'domsevent',
+  },
 };
 
 export default config;
