@@ -4,7 +4,7 @@ import consoleFactory from 'console-factory';
 import CronDaemon, { MessageTypes } from './CronDaemon';
 import config from './config';
 
-const console = consoleFactory('Client.js', 0);
+const console = consoleFactory('@raininglemons/cron-manager', 'Client.js', 0);
 
 type JobName = string;
 type AssigneeUuid = string;
@@ -47,7 +47,7 @@ class Client {
         this.webWorkerPort.addEventListener('message', this.receiveWorkerMessage.bind(this), false);
         this.webWorkerPort.start();
       } catch (e) {
-        console.warn('Web worker couldn\'t be started. Are you using web pack to build?');
+        console.error('Web worker couldn\'t be started. Are you using web pack to build?', e);
         webWorkerSupported = false;
         this.daemon = new CronDaemon(this.uuid, this.receiveMessage.bind(this));
       }
