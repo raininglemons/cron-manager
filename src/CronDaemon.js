@@ -559,6 +559,12 @@ class CronDaemon {
       }
     });
 
+    assignee.assignedJobs.forEach(jobName => {
+      const job = this.getJob(jobName);
+
+      job.assignedTo = null;
+    });
+
     console.debug('Removing assignee from pool', assignee);
   }
 

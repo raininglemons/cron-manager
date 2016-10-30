@@ -11,6 +11,7 @@ const config = {
     db: 'domsevent',
     objectType: 'domsevent',
   },
+  sharedWorkerCdn: '/5a796bbb9a4651b70d1a.sharedworker.js',
 };
 
 export default config;

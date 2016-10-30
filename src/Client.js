@@ -38,7 +38,13 @@ class Client {
     this.jobs = {};
 
     if (webWorkerSupported) {
-      const sharedWorker = require('shared-worker!./worker.js')();
+      let sharedWorker = null;
+      try {
+        sharedWorker = require('shared-worker!./worker.js')();
+        throw new Error('boom');
+      } catch (e) {
+        sharedWorker = new SharedWorker(config.sharedWorkerCdn);
+      }
       this.webWorkerPort = sharedWorker.port;
       console.warn('Success in loading worker', sharedWorker);
 
