@@ -1,5 +1,5 @@
 {
-  "name": "cron-manager",
+  "name": "@raininglemons/cron-manager",
   "version": "0.0.1",
   "description": "Cross tab \"cron manager\"",
   "main": "src/index.js",
