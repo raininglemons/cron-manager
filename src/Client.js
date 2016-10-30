@@ -25,7 +25,7 @@ type Runner = (done: Function, ping: Function) => {};
 
 type Callback = (data: ?any) => {};
 
-const webWorkerSupported = typeof SharedWorker !== 'undefined';
+let webWorkerSupported = typeof SharedWorker !== 'undefined';
 
 class Client {
   uuid: AssigneeUuid;
@@ -41,15 +41,16 @@ class Client {
       let sharedWorker = null;
       try {
         sharedWorker = require('shared-worker!./worker.js')();
-        throw new Error('boom');
-      } catch (e) {
-        sharedWorker = new SharedWorker(config.sharedWorkerCdn);
-      }
-      this.webWorkerPort = sharedWorker.port;
-      console.warn('Success in loading worker', sharedWorker);
+        this.webWorkerPort = sharedWorker.port;
+        console.warn('Success in loading worker', sharedWorker);
 
-      this.webWorkerPort.addEventListener('message', this.receiveWorkerMessage.bind(this), false);
-      this.webWorkerPort.start();
+        this.webWorkerPort.addEventListener('message', this.receiveWorkerMessage.bind(this), false);
+        this.webWorkerPort.start();
+      } catch (e) {
+        console.warn('Web worker couldn\'t be started. Are you using web pack to build?');
+        webWorkerSupported = false;
+        this.daemon = new CronDaemon(this.uuid, this.receiveMessage.bind(this));
+      }
     } else {
       this.daemon = new CronDaemon(this.uuid, this.receiveMessage.bind(this));
     }

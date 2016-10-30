@@ -6,7 +6,7 @@ import Job from './Job';
 import { getStore } from './indexedDb';
 import toSimpleObject from './toSimpleObject';
 
-const console = consoleFactory('CronDaemon.js', 3);
+const console = consoleFactory('CronDaemon.js', 0);
 
 type JobName = string;
 type AssigneeUuid = string;
